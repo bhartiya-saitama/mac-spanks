@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="Spank Detector"
 SRC_ENTRY="src/app.py"
 CONFIG_PATH="src/config.json"
-ICON_PATH="assets/icon.icns"
+ICON_PATH="assets/icon.png"
 SAMPLE_AUDIO="assets/faah_sound.mp3"
 DISTPATH="dist"
 
@@ -91,6 +91,7 @@ pyinstaller \
   --name "$APP_NAME" \
   "${ICON_FLAG[@]}" \
   --add-data "$CONFIG_PATH:." \
+  --add-data "$ICON_PATH:." \
   --add-data "$SAMPLE_AUDIO:." \
   "$SRC_ENTRY"
 

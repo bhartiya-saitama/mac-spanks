@@ -9,7 +9,8 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.scrolled import ScrolledText
 
 from detector import Detector, RuntimeParams
-from config_manager import ConfigManager
+from config_manager import ConfigManager, _bundled_resource_path
+from AppKit import NSApplication, NSImage
 
 
 class App(tb.Window):
@@ -19,6 +20,14 @@ class App(tb.Window):
         initial_theme = self._read_theme_from_file(default="darkly")
 
         super().__init__(title="Spank Detector", themename=initial_theme)
+        # Set the dock/taskbar icon
+        try:
+            icon_path = _bundled_resource_path("icon.png")
+            if os.path.exists(icon_path):
+                image = NSImage.alloc().initWithContentsOfFile_(icon_path)
+                NSApplication.sharedApplication().setApplicationIconImage_(image)
+        except Exception:
+            pass
 
         self.geometry("760x820")
         self.minsize(560, 700)
