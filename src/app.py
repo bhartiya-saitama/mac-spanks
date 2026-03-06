@@ -210,10 +210,10 @@ class App(tb.Window):
         row2.pack(fill=X)
 
         # visible outline so border shows in dark themes
-        self.add_sound_btn = tb.Button(row2, text="Add new sound", bootstyle="outline-light", command=self.on_add_sound)
+        self.add_sound_btn = tb.Button(row2, text="Add new sound", bootstyle="outline-primary", command=self.on_add_sound)
         self.add_sound_btn.pack(side=LEFT, fill=X, expand=YES, padx=(0, 10))
 
-        self.remove_sound_btn = tb.Button(row2, text="Remove sound", bootstyle="outline-secondary", command=self.on_remove_sound)
+        self.remove_sound_btn = tb.Button(row2, text="Remove sound", bootstyle="outline-primary", command=self.on_remove_sound)
         self.remove_sound_btn.pack(side=LEFT, fill=X, expand=YES)
 
     def _build_advanced_tab(self):
@@ -226,7 +226,7 @@ class App(tb.Window):
         row = tb.Frame(self.advanced_tab, bootstyle="secondary")
         row.pack(fill=X, pady=(10, 0))
 
-        default_btn = tb.Button(row, text="Restore Defaults", bootstyle="outline-light", command=self.on_reset_defaults)
+        default_btn = tb.Button(row, text="Restore Defaults", bootstyle="outline-primary", command=self.on_reset_defaults)
         default_btn.pack(side=LEFT)
         self._advanced_widgets.append(default_btn)
 
@@ -248,7 +248,7 @@ class App(tb.Window):
 
         scale.configure(command=lambda _v, k=key: self._sync_entry_from_scale(k))
 
-        apply_btn = tb.Button(frame, text="Apply", bootstyle="outline-secondary", command=self.on_advanced_change)
+        apply_btn = tb.Button(frame, text="Apply", bootstyle="outline-primary", command=self.on_advanced_change)
         apply_btn.pack(side=LEFT, padx=(10, 0))
         self._advanced_widgets.append(apply_btn)
 
