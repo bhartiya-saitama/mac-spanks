@@ -28,7 +28,7 @@ mac-spanks/
 │   └── config.json         # Bundled seed config (defaults only)
 ├── assets/
 │   ├── faah_sound.mp3      # Default hit sound bundled into the .app
-│   └── icon.icns           # App icon
+│   └── icon.png           # App icon
 ├── images/
 │   ├── general_tab.png
 │   ├── advanced_tab.png
