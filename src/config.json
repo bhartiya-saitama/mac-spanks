@@ -3,14 +3,15 @@
         "threshold": 0.7,
         "cooldown": 0.4,
         "sleep_time": 1.0,
-        "hit_sound": "/Users/singhayushkumar/Downloads/Music/faah sound.mp3"
+        "hit_sound": "/Users/singhayushkumar/Downloads/Music/faah sound - 2.mp3"
     },
     "default_values": {
         "threshold": 0.7,
         "cooldown": 0.4,
         "sleep_time": 1,
         "hit_sound_list": [
-            "/Users/singhayushkumar/Downloads/Music/faah sound.mp3"
+            "/Users/singhayushkumar/Downloads/Music/faah sound.mp3",
+            "/Users/singhayushkumar/Downloads/Music/faah sound - 2.mp3"
         ]
     }
 }
