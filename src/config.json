@@ -1,6 +1,6 @@
 {
     "active_values": {
-        "threshold": 0.7,
+        "threshold": 0.59,
         "cooldown": 0.4,
         "sleep_time": 1.0,
         "hit_sound": "/Users/singhayushkumar/Downloads/Music/faah sound.mp3"
@@ -12,5 +12,8 @@
         "hit_sound_list": [
             "/Users/singhayushkumar/Downloads/Music/faah sound.mp3"
         ]
+    },
+    "ui": {
+        "theme": "cyborg"
     }
 }

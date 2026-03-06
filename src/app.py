@@ -1,144 +1,307 @@
-# app.py
 import os
 import queue
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from tkinter.scrolledtext import ScrolledText
+from tkinter import filedialog, messagebox
+
+import ttkbootstrap as tb
+from ttkbootstrap.constants import *
+from ttkbootstrap.scrolled import ScrolledText
 
 from detector import Detector, RuntimeParams
 from config_manager import ConfigManager
 
 
-class App(tk.Tk):
+class App(tb.Window):
     def __init__(self):
-        super().__init__()
-        self.title("SPANK DETECTOR")
-        self.geometry("720x780")
-        self.minsize(520, 700)  # narrower minimum is ok now
-
         self.config_path = os.path.join(os.path.dirname(__file__), "config.json")
+
+        # Read theme from config if available (without depending on ConfigManager)
+        initial_theme = self._read_theme_from_file(default="darkly")
+        super().__init__(title="Spank Detector", themename=initial_theme)
+
+        self.geometry("760x820")
+        self.minsize(560, 700)
+
+        # Match window background to theme
+        try:
+            self.configure(bg=self.style.colors.bg)
+        except Exception:
+            pass
+
         self.cfg = ConfigManager(self.config_path)
 
         self.detector = None
         self.log_q = queue.Queue()
 
+        # UI vars
         self.sound_var = tk.StringVar()
-        self.threshold_var = tk.DoubleVar()
-        self.cooldown_var = tk.DoubleVar()
-        self.sleep_var = tk.DoubleVar()
+        self.theme_var = tk.StringVar(value=initial_theme)
+
+        # Advanced values as strings (so entries always show 2 decimals)
+        self.threshold_var = tk.StringVar()
+        self.cooldown_var = tk.StringVar()
+        self.sleep_var = tk.StringVar()
+
+        # Sliders as doubles
+        self.threshold_scale = tk.DoubleVar()
+        self.cooldown_scale = tk.DoubleVar()
+        self.sleep_scale = tk.DoubleVar()
 
         self._advanced_widgets = []
+        self._console_text = None
+        self._nb_style_name = "Centered.TNotebook"
 
         self._build_ui()
         self._load_vars_from_cfg()
+
+        self._set_running_ui(False)
+
         self.after(50, self._pump_logs)
+        self.after(120, self._center_notebook_tabs)
+        self.bind("<Configure>", lambda _e: self.after(60, self._center_notebook_tabs))
+
+    # ---------------- theme persistence ----------------
+    def _read_theme_from_file(self, default: str) -> str:
+        try:
+            import json
+
+            if os.path.exists(self.config_path):
+                with open(self.config_path, "r") as f:
+                    data = json.load(f)
+                return data.get("ui", {}).get("theme", default)
+        except Exception:
+            pass
+        return default
+
+    def _persist_theme(self, theme: str) -> None:
+        """
+        Persist theme in the SAME object that later writes config.json (ConfigManager),
+        so it doesn't get overwritten.
+        """
+        try:
+            # Store inside ConfigManager's in-memory dict and save through it.
+            self.cfg._config.setdefault("ui", {})
+            self.cfg._config["ui"]["theme"] = theme
+            self.cfg.save()
+        except Exception:
+            # As a fallback, do nothing; theme still works for this session.
+            pass
 
     # ---------------- UI ----------------
     def _build_ui(self):
-        outer = ttk.Frame(self, padding=14)
-        outer.pack(fill="both", expand=True)
+        outer = tb.Frame(self, padding=18, bootstyle="default")
+        outer.pack(fill=BOTH, expand=YES)
 
-        card = ttk.Frame(outer, padding=14, relief="ridge")
-        card.pack(fill="x", pady=(0, 12))
+        # Top card
+        card = tb.Frame(outer, padding=16, bootstyle="secondary")
+        card.pack(fill=X, pady=(0, 12))
 
-        ttk.Label(card, text="SPANK DETECTOR", font=("Helvetica", 16, "bold")).pack(pady=(0, 10))
+        # Header: Title + (status on right)
+        header = tb.Frame(card, bootstyle="secondary")
+        header.pack(fill=X)
 
-        self.nb = ttk.Notebook(card)
-        self.nb.pack(fill="x", expand=False)
+        tb.Label(
+            header,
+            text="SPANK DETECTOR",
+            font=("Helvetica", 18, "bold"),
+            bootstyle="inverse-secondary",
+        ).pack(side=LEFT, anchor=W)
 
-        self.general_tab = ttk.Frame(self.nb, padding=12)
-        self.advanced_tab = ttk.Frame(self.nb, padding=12)
+        status_wrap = tb.Frame(header, bootstyle="secondary")
+        status_wrap.pack(side=RIGHT, anchor=E)
+
+        # Status dot
+        self.status_dot = tk.Canvas(status_wrap, width=12, height=12, highlightthickness=0, bd=0)
+        try:
+            self.status_dot.configure(bg=self.style.colors.secondary)
+        except Exception:
+            pass
+        self._dot_id = self.status_dot.create_oval(2, 2, 10, 10, fill="#dc3545", outline="")
+        self.status_dot.pack(side=LEFT, padx=(0, 8))
+
+        # Running badge (shown when running)
+        self.running_badge = tb.Label(status_wrap, text="Running…", bootstyle="success", padding=(10, 4))
+
+        tb.Label(
+            card,
+            text="Detect chassis taps and play a sound",
+            bootstyle="inverse-secondary",
+        ).pack(anchor=W, pady=(8, 10))
+
+        # Tabs
+        self.nb = tb.Notebook(card, bootstyle="secondary")
+        self.nb.pack(fill=X, pady=(8, 10))
+        self.nb.configure(style=self._nb_style_name)
+
+        self.general_tab = tb.Frame(self.nb, padding=12, bootstyle="secondary")
+        self.advanced_tab = tb.Frame(self.nb, padding=12, bootstyle="secondary")
         self.nb.add(self.general_tab, text="General")
         self.nb.add(self.advanced_tab, text="Advanced")
 
         self._build_general_tab()
         self._build_advanced_tab()
 
-        btn_row = ttk.Frame(card)
-        btn_row.pack(fill="x", pady=(12, 0))
+        # Theme selector row (moved here for space — not cramped)
+        theme_row = tb.Frame(card, bootstyle="secondary")
+        theme_row.pack(fill=X, pady=(6, 0))
 
-        self.start_btn = ttk.Button(btn_row, text="START", command=self.on_start)
-        self.start_btn.pack(side="left", expand=True, fill="x", padx=(0, 10))
+        theme_right = tb.Frame(theme_row, bootstyle="secondary")
+        theme_right.pack(side=RIGHT)
 
-        self.stop_btn = ttk.Button(btn_row, text="STOP", command=self.on_stop, state="disabled")
-        self.stop_btn.pack(side="left", expand=True, fill="x")
+        tb.Label(theme_right, text="Theme:", bootstyle="inverse-secondary").pack(side=LEFT, padx=(0, 8))
+        themes = sorted(self.style.theme_names())
+        self.theme_combo = tb.Combobox(
+            theme_right, values=themes, textvariable=self.theme_var, state="readonly", width=18
+        )
+        self.theme_combo.pack(side=LEFT)
+        self.theme_combo.bind("<<ComboboxSelected>>", self.on_theme_change)
 
-        console_frame = ttk.Frame(outer, padding=10, relief="ridge")
-        console_frame.pack(fill="both", expand=True)
+        # Start/Stop row
+        btn_row = tb.Frame(card, bootstyle="secondary")
+        btn_row.pack(fill=X, pady=(10, 0))
 
-        self.console = ScrolledText(console_frame, height=18, wrap="word", state="disabled")
-        self.console.pack(fill="both", expand=True)
+        self.start_btn = tb.Button(btn_row, text="Start", bootstyle="success", command=self.on_start)
+        self.start_btn.pack(side=LEFT, expand=YES, fill=X, padx=(0, 10))
 
-        style = ttk.Style()
-        try:
-            style.configure("Stop.TButton", foreground="white")
-            style.map("Stop.TButton",
-                      background=[("active", "#b00020"), ("!disabled", "#d32f2f")],
-                      foreground=[("!disabled", "white")])
-        except Exception:
-            pass
-        self.stop_btn.configure(style="Stop.TButton")
+        self.stop_btn = tb.Button(btn_row, text="Stop", bootstyle="danger", command=self.on_stop, state=DISABLED)
+        self.stop_btn.pack(side=LEFT, expand=YES, fill=X)
+
+        # Console card
+        console_card = tb.Frame(outer, padding=12, bootstyle="secondary")
+        console_card.pack(fill=BOTH, expand=YES)
+
+        tb.Label(console_card, text="Console", bootstyle="inverse-secondary").pack(anchor=W)
+
+        self.console = ScrolledText(
+            console_card,
+            height=18,
+            autohide=True,
+            padding=8,
+            font=("Menlo", 11),
+        )
+        self.console.pack(fill=BOTH, expand=YES, pady=(6, 0))
+
+        self._console_text = self._get_console_text_widget()
+        if self._console_text is not None:
+            self._console_text.configure(state=DISABLED)
 
     def _build_general_tab(self):
-        # Row 1: label + combobox (no buttons here, so it never disappears)
-        row1 = ttk.Frame(self.general_tab)
-        row1.pack(fill="x", pady=(0, 8))
+        row1 = tb.Frame(self.general_tab, bootstyle="secondary")
+        row1.pack(fill=X, pady=(0, 8))
 
-        ttk.Label(row1, text="Sound:").pack(side="left")
+        tb.Label(row1, text="Sound:", width=10, bootstyle="inverse-secondary").pack(side=LEFT)
 
-        self.sound_combo = ttk.Combobox(row1, textvariable=self.sound_var, state="readonly")
-        self.sound_combo.pack(side="left", padx=10, fill="x", expand=True)
+        self.sound_combo = tb.Combobox(row1, textvariable=self.sound_var, state="readonly")
+        self.sound_combo.pack(side=LEFT, fill=X, expand=YES)
         self.sound_combo.bind("<<ComboboxSelected>>", self.on_sound_selected)
 
-        # Row 2: buttons (always visible even on narrow windows)
-        row2 = ttk.Frame(self.general_tab)
-        row2.pack(fill="x", pady=(0, 6))
+        row2 = tb.Frame(self.general_tab, bootstyle="secondary")
+        row2.pack(fill=X)
 
-        self.add_sound_btn = ttk.Button(row2, text="Add new sound", command=self.on_add_sound)
-        self.add_sound_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.add_sound_btn = tb.Button(row2, text="Add new sound", bootstyle="secondary", command=self.on_add_sound)
+        self.add_sound_btn.pack(side=LEFT, fill=X, expand=YES, padx=(0, 10))
 
-        self.remove_sound_btn = ttk.Button(row2, text="Remove sound", command=self.on_remove_sound)
-        self.remove_sound_btn.pack(side="left", fill="x", expand=True)
+        self.remove_sound_btn = tb.Button(
+            row2, text="Remove sound", bootstyle="outline-secondary", command=self.on_remove_sound
+        )
+        self.remove_sound_btn.pack(side=LEFT, fill=X, expand=YES)
 
     def _build_advanced_tab(self):
-        self._add_param_row("Threshold:", self.threshold_var, 0.0, 1.5)
-        self._add_param_row("Cooldown (in sec):", self.cooldown_var, 0.0, 3.0)
-        self._add_param_row("Sleep time (in sec):", self.sleep_var, 0.01, 3.0)
+        self._add_param_row("Threshold", "threshold", self.threshold_var, self.threshold_scale, 0.0, 1.5)
+        self._add_param_row("Cooldown (s)", "cooldown", self.cooldown_var, self.cooldown_scale, 0.0, 3.0)
+        self._add_param_row("Sleep time (s)", "sleep", self.sleep_var, self.sleep_scale, 0.01, 3.0)
 
-        btn_row = ttk.Frame(self.advanced_tab)
-        btn_row.pack(fill="x", pady=(8, 0))
-        default_btn = ttk.Button(btn_row, text="Default", command=self.on_reset_defaults)
-        default_btn.pack()
+        row = tb.Frame(self.advanced_tab, bootstyle="secondary")
+        row.pack(fill=X, pady=(8, 0))
+
+        default_btn = tb.Button(row, text="Restore Defaults", bootstyle="secondary", command=self.on_reset_defaults)
+        default_btn.pack(side=LEFT)
         self._advanced_widgets.append(default_btn)
 
-    def _add_param_row(self, label, var, from_, to):
-        frame = ttk.Frame(self.advanced_tab)
-        frame.pack(fill="x", pady=6)
+    def _add_param_row(self, label, key, entry_var: tk.StringVar, scale_var: tk.DoubleVar, from_, to):
+        frame = tb.Frame(self.advanced_tab, bootstyle="secondary")
+        frame.pack(fill=X, pady=6)
 
-        lbl = ttk.Label(frame, text=label, width=18)
-        lbl.pack(side="left")
-        self._advanced_widgets.append(lbl)
+        tb.Label(frame, text=label, width=14, bootstyle="inverse-secondary").pack(side=LEFT)
 
-        entry = ttk.Entry(frame, textvariable=var, width=10)
-        entry.pack(side="left", padx=(0, 10))
-        entry.bind("<Return>", lambda e: self.on_advanced_change())
-        entry.bind("<FocusOut>", lambda e: self._format_and_apply(var))
+        entry = tb.Entry(frame, textvariable=entry_var, width=10)
+        entry.pack(side=LEFT, padx=(0, 10))
+        entry.bind("<Return>", lambda e, k=key: self._format_and_apply_key(k))
+        entry.bind("<FocusOut>", lambda e, k=key: self._format_and_apply_key(k))
         self._advanced_widgets.append(entry)
 
-        scale = ttk.Scale(
-            frame,
-            variable=var,
-            from_=from_,
-            to=to,
-            orient="horizontal",
-            command=lambda _v, v=var: self._on_scale_change(v),
-        )
-        scale.pack(side="left", fill="x", expand=True)
+        scale = tb.Scale(frame, variable=scale_var, from_=from_, to=to)
+        scale.pack(side=LEFT, fill=X, expand=YES)
         self._advanced_widgets.append(scale)
 
-        apply_btn = ttk.Button(frame, text="Apply", command=self.on_advanced_change)
-        apply_btn.pack(side="left", padx=(10, 0))
+        scale.configure(command=lambda _v, k=key: self._sync_entry_from_scale(k))
+
+        apply_btn = tb.Button(frame, text="Apply", bootstyle="outline-secondary", command=self.on_advanced_change)
+        apply_btn.pack(side=LEFT, padx=(10, 0))
         self._advanced_widgets.append(apply_btn)
+
+    # ---------------- Center notebook tabs ----------------
+    def _center_notebook_tabs(self):
+        try:
+            n = len(self.nb.tabs())
+            if n <= 0:
+                return
+            self.update_idletasks()
+
+            total = 0
+            for i in range(n):
+                bb = self.nb.bbox(i)
+                if bb:
+                    total += bb[2]
+
+            if total <= 0:
+                return
+
+            nb_w = self.nb.winfo_width()
+            left = max(8, int((nb_w - total) / 2))
+            self.style.configure(self._nb_style_name, tabmargins=(left, 2, 2, 0))
+        except Exception:
+            pass
+
+    # ---------------- Console helpers ----------------
+    def _get_console_text_widget(self):
+        if hasattr(self.console, "text"):
+            return self.console.text
+        for child in self.console.winfo_children():
+            if child.winfo_class() == "Text":
+                return child
+        return None
+
+    # ---------------- Advanced rounding + syncing ----------------
+    def _get_scale_var(self, key: str) -> tk.DoubleVar:
+        return {"threshold": self.threshold_scale, "cooldown": self.cooldown_scale, "sleep": self.sleep_scale}[key]
+
+    def _get_entry_var(self, key: str) -> tk.StringVar:
+        return {"threshold": self.threshold_var, "cooldown": self.cooldown_var, "sleep": self.sleep_var}[key]
+
+    def _sync_entry_from_scale(self, key: str):
+        sv = self._get_scale_var(key)
+        ev = self._get_entry_var(key)
+        ev.set(f"{round(float(sv.get()), 2):.2f}")
+
+    def _sync_scale_from_entry(self, key: str):
+        sv = self._get_scale_var(key)
+        ev = self._get_entry_var(key)
+        try:
+            sv.set(float(ev.get()))
+        except Exception:
+            pass
+
+    def _format_and_apply_key(self, key: str):
+        ev = self._get_entry_var(key)
+        try:
+            ev.set(f"{round(float(ev.get()), 2):.2f}")
+        except Exception:
+            messagebox.showerror("Invalid value", "Please enter a valid number.")
+            self._load_vars_from_cfg()
+            return
+        self._sync_scale_from_entry(key)
+        self.on_advanced_change()
 
     # ---------------- Config/UI sync ----------------
     def _load_vars_from_cfg(self):
@@ -146,39 +309,44 @@ class App(tk.Tk):
         av = self.cfg.get_active_values()
 
         self._sound_paths = list(dv.hit_sound_list)
-        display_names = [os.path.basename(p) for p in self._sound_paths]
-        self.sound_combo["values"] = display_names
+        display = [os.path.basename(p) for p in self._sound_paths]
+        self.sound_combo["values"] = display
 
         if self._sound_paths:
-            if av.hit_sound in self._sound_paths:
-                idx = self._sound_paths.index(av.hit_sound)
-            else:
-                idx = 0
-                # keep config consistent if active points to missing file
+            idx = self._sound_paths.index(av.hit_sound) if av.hit_sound in self._sound_paths else 0
+            if av.hit_sound not in self._sound_paths:
                 self.cfg.set_active_sound(self._sound_paths[0])
-
             self.sound_combo.current(idx)
-            self.sound_var.set(display_names[idx])
-            self.remove_sound_btn.configure(state="normal")
+            self.sound_var.set(display[idx])
+            self.remove_sound_btn.configure(state=NORMAL)
         else:
             self.sound_combo.set("")
             self.sound_var.set("")
-            self.remove_sound_btn.configure(state="disabled")
+            self.remove_sound_btn.configure(state=DISABLED)
 
-        self.threshold_var.set(round(av.threshold, 2))
-        self.cooldown_var.set(round(av.cooldown, 2))
-        self.sleep_var.set(round(av.sleep_time, 2))
+        self.threshold_var.set(f"{round(av.threshold, 2):.2f}")
+        self.cooldown_var.set(f"{round(av.cooldown, 2):.2f}")
+        self.sleep_var.set(f"{round(av.sleep_time, 2):.2f}")
+
+        self.threshold_scale.set(float(self.threshold_var.get()))
+        self.cooldown_scale.set(float(self.cooldown_var.get()))
+        self.sleep_scale.set(float(self.sleep_var.get()))
 
     def _current_params(self) -> RuntimeParams:
         idx = self.sound_combo.current()
-        hit_sound = self._sound_paths[idx] if (0 <= idx < len(self._sound_paths)) else ""
+        sound = self._sound_paths[idx] if (0 <= idx < len(self._sound_paths)) else ""
 
-        return RuntimeParams(
-            threshold=round(float(self.threshold_var.get()), 2),
-            cooldown=round(float(self.cooldown_var.get()), 2),
-            sleep_time=round(float(self.sleep_var.get()), 2),
-            hit_sound=hit_sound,
-        )
+        def f2(s: str, default: float) -> float:
+            try:
+                return round(float(s), 2)
+            except Exception:
+                return default
+
+        t = f2(self.threshold_var.get(), 0.7)
+        c = f2(self.cooldown_var.get(), 0.4)
+        sl = f2(self.sleep_var.get(), 1.0)
+
+        return RuntimeParams(threshold=t, cooldown=c, sleep_time=sl, hit_sound=sound)
 
     # ---------------- Logging ----------------
     def log(self, msg: str):
@@ -188,18 +356,87 @@ class App(tk.Tk):
         try:
             while True:
                 msg = self.log_q.get_nowait()
-                self.console.configure(state="normal")
-                self.console.insert("end", msg + "\n")
-                self.console.see("end")
-                self.console.configure(state="disabled")
+                if self._console_text is None:
+                    continue
+                self._console_text.configure(state=NORMAL)
+                self._console_text.insert(END, msg + "\n")
+                self._console_text.see(END)
+                self._console_text.configure(state=DISABLED)
         except queue.Empty:
             pass
         self.after(50, self._pump_logs)
 
-    def clear_console(self):
-        self.console.configure(state="normal")
-        self.console.delete("1.0", "end")
-        self.console.configure(state="disabled")
+    def _clear_console(self):
+        if self._console_text is None:
+            return
+        self._console_text.configure(state=NORMAL)
+        self._console_text.delete("1.0", END)
+        self._console_text.configure(state=DISABLED)
+
+    # ---------------- Running UI ----------------
+    def _set_running_ui(self, running: bool):
+        dot_color = "#28a745" if running else "#dc3545"
+        try:
+            self.status_dot.itemconfig(self._dot_id, fill=dot_color)
+        except Exception:
+            pass
+
+        if running:
+            if not self.running_badge.winfo_ismapped():
+                self.running_badge.pack(side=LEFT)
+        else:
+            if self.running_badge.winfo_ismapped():
+                self.running_badge.pack_forget()
+
+    # ---------------- Theme change ----------------
+    def on_theme_change(self, event=None):
+        theme = self.theme_var.get()
+        if not theme:
+            return
+
+        # Close dropdown/popup before switching theme to avoid popdown widget Tcl errors
+        try:
+            self.theme_combo.event_generate("<Escape>")
+            self.focus_set()
+            self.update_idletasks()
+        except Exception:
+            pass
+
+        def apply_theme():
+            try:
+                self.style.theme_use(theme)
+                try:
+                    self.configure(bg=self.style.colors.bg)
+                except Exception:
+                    pass
+                try:
+                    self.status_dot.configure(bg=self.style.colors.secondary)
+                except Exception:
+                    pass
+
+                # Persist through ConfigManager so later saves don't wipe it
+                self._persist_theme(theme)
+
+                self.after(80, self._center_notebook_tabs)
+            except tk.TclError as e:
+                # If it's the known combobox popdown issue, ignore it silently.
+                # Theme usually still applies.
+                msg = str(e)
+                if "combobox.popdown" in msg or "popdown" in msg:
+                    try:
+                        self.style.theme_use(theme)
+                        self._persist_theme(theme)
+                        self.after(80, self._center_notebook_tabs)
+                    except Exception:
+                        pass
+                    return
+                # Otherwise show an error
+                messagebox.showerror("Theme error", f"Could not apply theme:\n{e}")
+            except Exception as e:
+                messagebox.showerror("Theme error", f"Could not apply theme:\n{e}")
+
+        # Apply on next tick (after popdown is gone)
+        self.after_idle(apply_theme)
 
     # ---------------- Handlers ----------------
     def on_sound_selected(self, event=None):
@@ -216,10 +453,8 @@ class App(tk.Tk):
         )
         if not path:
             return
-
         self.cfg.add_sound(path)
         self._load_vars_from_cfg()
-
         if self.detector:
             self.detector.update_params(self._current_params())
 
@@ -227,50 +462,36 @@ class App(tk.Tk):
         idx = self.sound_combo.current()
         if not (0 <= idx < len(self._sound_paths)):
             return
-
         full_path = self._sound_paths[idx]
         name = os.path.basename(full_path)
-
         if not messagebox.askyesno("Remove sound", f"Remove '{name}' from the list?"):
             return
-
         self.cfg.remove_sound(full_path)
         self._load_vars_from_cfg()
-
         if self.detector:
-            # If currently running, update to whatever new active sound is
             self.detector.update_params(self._current_params())
 
-    def _format_and_apply(self, var):
-        try:
-            val = round(float(var.get()), 2)
-        except Exception:
-            messagebox.showerror("Invalid value", "Please enter a valid number.")
-            self._load_vars_from_cfg()
-            return
-        var.set(val)
-        self.on_advanced_change()
-
-    def _on_scale_change(self, var):
-        try:
-            var.set(round(float(var.get()), 2))
-        except Exception:
-            pass
-
     def on_advanced_change(self):
+        # Keep display formatted
+        for k in ("threshold", "cooldown", "sleep"):
+            ev = self._get_entry_var(k)
+            try:
+                ev.set(f"{round(float(ev.get()), 2):.2f}")
+            except Exception:
+                self._load_vars_from_cfg()
+                return
+            self._sync_scale_from_entry(k)
+
+        params = self._current_params()
         try:
-            self.cfg.set_active_advanced(
-                threshold=round(float(self.threshold_var.get()), 2),
-                cooldown=round(float(self.cooldown_var.get()), 2),
-                sleep_time=round(float(self.sleep_var.get()), 2),
-            )
+            self.cfg.set_active_advanced(params.threshold, params.cooldown, params.sleep_time)
         except ValueError:
             messagebox.showerror("Invalid values", "Threshold >= 0, Cooldown >= 0, Sleep time > 0")
             self._load_vars_from_cfg()
             return
 
         if self.detector:
-            self.detector.update_params(self._current_params())
+            self.detector.update_params(params)
 
     def on_reset_defaults(self):
         self.cfg.reset_active_advanced_to_defaults()
@@ -278,22 +499,22 @@ class App(tk.Tk):
         if self.detector:
             self.detector.update_params(self._current_params())
 
-    # ---------------- Start/Stop + disable advanced while running ----------------
+    # ---------------- Start/Stop + disable controls ----------------
     def _set_advanced_enabled(self, enabled: bool):
-        state = "normal" if enabled else "disabled"
+        disabled_flag = ["disabled"] if not enabled else ["!disabled"]
         for w in self._advanced_widgets:
             try:
-                w.configure(state=state)
+                if hasattr(w, "state"):
+                    w.state(disabled_flag)
+                else:
+                    w.configure(state=("normal" if enabled else "disabled"))
             except Exception:
                 pass
 
     def on_start(self):
-        # Format values to 2 decimals and persist
-        self._format_and_apply(self.threshold_var)
-        self._format_and_apply(self.cooldown_var)
-        self._format_and_apply(self.sleep_var)
+        for k in ("threshold", "cooldown", "sleep"):
+            self._format_and_apply_key(k)
 
-        # Save active sound (full path)
         idx = self.sound_combo.current()
         if 0 <= idx < len(self._sound_paths):
             self.cfg.set_active_sound(self._sound_paths[idx])
@@ -306,29 +527,32 @@ class App(tk.Tk):
         self.detector = Detector(params, log_callback=self.log)
         self.detector.start()
 
-        self.start_btn.configure(state="disabled")
-        self.stop_btn.configure(state="normal")
-        self._set_advanced_enabled(False)
+        self.start_btn.configure(state=DISABLED)
+        self.stop_btn.configure(state=NORMAL)
 
-        # Optional: also prevent add/remove while running
-        self.add_sound_btn.configure(state="disabled")
-        self.remove_sound_btn.configure(state="disabled")
+        self._set_advanced_enabled(False)
+        self.add_sound_btn.configure(state=DISABLED)
+        self.remove_sound_btn.configure(state=DISABLED)
+        self.theme_combo.configure(state=DISABLED)
+
+        self._set_running_ui(True)
 
     def on_stop(self):
         if self.detector:
             self.detector.stop()
             self.detector = None
 
-        self.clear_console()
+        self._clear_console()
 
-        self.start_btn.configure(state="normal")
-        self.stop_btn.configure(state="disabled")
+        self.start_btn.configure(state=NORMAL)
+        self.stop_btn.configure(state=DISABLED)
+
         self._set_advanced_enabled(True)
+        self.add_sound_btn.configure(state=NORMAL)
+        self.remove_sound_btn.configure(state=NORMAL if getattr(self, "_sound_paths", []) else DISABLED)
+        self.theme_combo.configure(state="readonly")
 
-        # Re-enable sound list editing
-        self.add_sound_btn.configure(state="normal")
-        # remove depends on whether list has items
-        self.remove_sound_btn.configure(state="normal" if getattr(self, "_sound_paths", []) else "disabled")
+        self._set_running_ui(False)
 
 
 if __name__ == "__main__":
