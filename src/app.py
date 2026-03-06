@@ -14,7 +14,7 @@ class App(tk.Tk):
         super().__init__()
         self.title("SPANK DETECTOR")
         self.geometry("720x780")
-        self.minsize(680, 740)
+        self.minsize(520, 700)  # narrower minimum is ok now
 
         self.config_path = os.path.join(os.path.dirname(__file__), "config.json")
         self.cfg = ConfigManager(self.config_path)
@@ -22,13 +22,11 @@ class App(tk.Tk):
         self.detector = None
         self.log_q = queue.Queue()
 
-        # UI vars
         self.sound_var = tk.StringVar()
         self.threshold_var = tk.DoubleVar()
         self.cooldown_var = tk.DoubleVar()
         self.sleep_var = tk.DoubleVar()
 
-        # keep references to advanced widgets for easy enable/disable
         self._advanced_widgets = []
 
         self._build_ui()
@@ -71,7 +69,6 @@ class App(tk.Tk):
         self.console = ScrolledText(console_frame, height=18, wrap="word", state="disabled")
         self.console.pack(fill="both", expand=True)
 
-        # style stop button (best-effort)
         style = ttk.Style()
         try:
             style.configure("Stop.TButton", foreground="white")
@@ -83,22 +80,27 @@ class App(tk.Tk):
         self.stop_btn.configure(style="Stop.TButton")
 
     def _build_general_tab(self):
-        row = ttk.Frame(self.general_tab)
-        row.pack(fill="x", pady=(0, 10))
+        # Row 1: label + combobox (no buttons here, so it never disappears)
+        row1 = ttk.Frame(self.general_tab)
+        row1.pack(fill="x", pady=(0, 8))
 
-        ttk.Label(row, text="Sound:").pack(side="left")
+        ttk.Label(row1, text="Sound:").pack(side="left")
 
-        # Combobox will show only filenames; mapping to full paths is kept via index
-        self.sound_combo = ttk.Combobox(row, textvariable=self.sound_var, state="readonly", width=55)
+        self.sound_combo = ttk.Combobox(row1, textvariable=self.sound_var, state="readonly")
         self.sound_combo.pack(side="left", padx=10, fill="x", expand=True)
         self.sound_combo.bind("<<ComboboxSelected>>", self.on_sound_selected)
 
-        # Add new sound button (visible)
-        add_btn = ttk.Button(row, text="Add new sound", command=self.on_add_sound)
-        add_btn.pack(side="left")
+        # Row 2: buttons (always visible even on narrow windows)
+        row2 = ttk.Frame(self.general_tab)
+        row2.pack(fill="x", pady=(0, 6))
+
+        self.add_sound_btn = ttk.Button(row2, text="Add new sound", command=self.on_add_sound)
+        self.add_sound_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self.remove_sound_btn = ttk.Button(row2, text="Remove sound", command=self.on_remove_sound)
+        self.remove_sound_btn.pack(side="left", fill="x", expand=True)
 
     def _build_advanced_tab(self):
-        # build 3 rows and register their widgets to _advanced_widgets
         self._add_param_row("Threshold:", self.threshold_var, 0.0, 1.5)
         self._add_param_row("Cooldown (in sec):", self.cooldown_var, 0.0, 3.0)
         self._add_param_row("Sleep time (in sec):", self.sleep_var, 0.01, 3.0)
@@ -123,8 +125,14 @@ class App(tk.Tk):
         entry.bind("<FocusOut>", lambda e: self._format_and_apply(var))
         self._advanced_widgets.append(entry)
 
-        scale = ttk.Scale(frame, variable=var, from_=from_, to=to, orient="horizontal",
-                          command=lambda _v, v=var: self._on_scale_change(v))
+        scale = ttk.Scale(
+            frame,
+            variable=var,
+            from_=from_,
+            to=to,
+            orient="horizontal",
+            command=lambda _v, v=var: self._on_scale_change(v),
+        )
         scale.pack(side="left", fill="x", expand=True)
         self._advanced_widgets.append(scale)
 
@@ -132,54 +140,43 @@ class App(tk.Tk):
         apply_btn.pack(side="left", padx=(10, 0))
         self._advanced_widgets.append(apply_btn)
 
-    # ---------------- Config load/save ----------------
+    # ---------------- Config/UI sync ----------------
     def _load_vars_from_cfg(self):
         dv = self.cfg.get_default_values()
         av = self.cfg.get_active_values()
 
-        # prepare mapping: keep full path list, show only basenames in combobox
-        self._sound_paths = list(dv.hit_sound_list)  # full paths
+        self._sound_paths = list(dv.hit_sound_list)
         display_names = [os.path.basename(p) for p in self._sound_paths]
         self.sound_combo["values"] = display_names
 
-        # set selection to index of active sound
-        active = av.hit_sound
-        selected_index = 0
-        if active and active in self._sound_paths:
-            selected_index = self._sound_paths.index(active)
-        elif self._sound_paths:
-            selected_index = 0
-
         if self._sound_paths:
-            # select by index and set corresponding display name
-            self.sound_combo.current(selected_index)
-            self.sound_var.set(display_names[selected_index])
+            if av.hit_sound in self._sound_paths:
+                idx = self._sound_paths.index(av.hit_sound)
+            else:
+                idx = 0
+                # keep config consistent if active points to missing file
+                self.cfg.set_active_sound(self._sound_paths[0])
+
+            self.sound_combo.current(idx)
+            self.sound_var.set(display_names[idx])
+            self.remove_sound_btn.configure(state="normal")
         else:
             self.sound_combo.set("")
+            self.sound_var.set("")
+            self.remove_sound_btn.configure(state="disabled")
 
-        # advanced values: ensure two-decimal presentation
         self.threshold_var.set(round(av.threshold, 2))
         self.cooldown_var.set(round(av.cooldown, 2))
         self.sleep_var.set(round(av.sleep_time, 2))
 
     def _current_params(self) -> RuntimeParams:
-        # use underlying full path for hit_sound
         idx = self.sound_combo.current()
-        hit_sound = ""
-        if idx >= 0 and idx < len(getattr(self, "_sound_paths", [])):
-            hit_sound = self._sound_paths[idx]
-        else:
-            hit_sound = ""
-
-        # round values to 2 decimals
-        t = round(float(self.threshold_var.get()), 2)
-        c = round(float(self.cooldown_var.get()), 2)
-        s = round(float(self.sleep_var.get()), 2)
+        hit_sound = self._sound_paths[idx] if (0 <= idx < len(self._sound_paths)) else ""
 
         return RuntimeParams(
-            threshold=t,
-            cooldown=c,
-            sleep_time=s,
+            threshold=round(float(self.threshold_var.get()), 2),
+            cooldown=round(float(self.cooldown_var.get()), 2),
+            sleep_time=round(float(self.sleep_var.get()), 2),
             hit_sound=hit_sound,
         )
 
@@ -206,11 +203,9 @@ class App(tk.Tk):
 
     # ---------------- Handlers ----------------
     def on_sound_selected(self, event=None):
-        # when user picks an item in combobox, write full path to config
         idx = self.sound_combo.current()
-        if idx >= 0 and idx < len(self._sound_paths):
-            full_path = self._sound_paths[idx]
-            self.cfg.set_active_sound(full_path)
+        if 0 <= idx < len(self._sound_paths):
+            self.cfg.set_active_sound(self._sound_paths[idx])
             if self.detector:
                 self.detector.update_params(self._current_params())
 
@@ -223,42 +218,52 @@ class App(tk.Tk):
             return
 
         self.cfg.add_sound(path)
-
-        # refresh UI from config manager
         self._load_vars_from_cfg()
 
-        # apply to running detector if any
         if self.detector:
             self.detector.update_params(self._current_params())
 
+    def on_remove_sound(self):
+        idx = self.sound_combo.current()
+        if not (0 <= idx < len(self._sound_paths)):
+            return
+
+        full_path = self._sound_paths[idx]
+        name = os.path.basename(full_path)
+
+        if not messagebox.askyesno("Remove sound", f"Remove '{name}' from the list?"):
+            return
+
+        self.cfg.remove_sound(full_path)
+        self._load_vars_from_cfg()
+
+        if self.detector:
+            # If currently running, update to whatever new active sound is
+            self.detector.update_params(self._current_params())
+
     def _format_and_apply(self, var):
-        # Format var to 2 decimals and apply to config
         try:
             val = round(float(var.get()), 2)
         except Exception:
             messagebox.showerror("Invalid value", "Please enter a valid number.")
             self._load_vars_from_cfg()
             return
-
         var.set(val)
         self.on_advanced_change()
 
     def _on_scale_change(self, var):
-        # keep the entry in sync while sliding, but don't save until focus out/apply
-        # show rounded val with two decimals
         try:
-            val = round(float(var.get()), 2)
+            var.set(round(float(var.get()), 2))
         except Exception:
-            val = 0.0
-        var.set(val)
+            pass
 
     def on_advanced_change(self):
-        # read values rounded to 2 decimals and save using ConfigManager
         try:
-            t = round(float(self.threshold_var.get()), 2)
-            c = round(float(self.cooldown_var.get()), 2)
-            s = round(float(self.sleep_var.get()), 2)
-            self.cfg.set_active_advanced(t, c, s)
+            self.cfg.set_active_advanced(
+                threshold=round(float(self.threshold_var.get()), 2),
+                cooldown=round(float(self.cooldown_var.get()), 2),
+                sleep_time=round(float(self.sleep_var.get()), 2),
+            )
         except ValueError:
             messagebox.showerror("Invalid values", "Threshold >= 0, Cooldown >= 0, Sleep time > 0")
             self._load_vars_from_cfg()
@@ -273,26 +278,24 @@ class App(tk.Tk):
         if self.detector:
             self.detector.update_params(self._current_params())
 
-    # ---------------- Start / Stop and widget enabling ----------------
+    # ---------------- Start/Stop + disable advanced while running ----------------
     def _set_advanced_enabled(self, enabled: bool):
         state = "normal" if enabled else "disabled"
         for w in self._advanced_widgets:
             try:
                 w.configure(state=state)
             except Exception:
-                # some widgets (Labels) don't accept state; ignore
                 pass
 
     def on_start(self):
-        # sync advanced and sound choice into config
-        # apply any formatting
+        # Format values to 2 decimals and persist
         self._format_and_apply(self.threshold_var)
         self._format_and_apply(self.cooldown_var)
         self._format_and_apply(self.sleep_var)
 
-        # ensure active sound saved
+        # Save active sound (full path)
         idx = self.sound_combo.current()
-        if idx >= 0 and idx < len(self._sound_paths):
+        if 0 <= idx < len(self._sound_paths):
             self.cfg.set_active_sound(self._sound_paths[idx])
 
         params = self._current_params()
@@ -300,16 +303,16 @@ class App(tk.Tk):
             messagebox.showerror("No sound selected", "Please select or add a sound first.")
             return
 
-        # Start detector
         self.detector = Detector(params, log_callback=self.log)
         self.detector.start()
 
-        # UI toggles
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
-
-        # disable advanced controls while running
         self._set_advanced_enabled(False)
+
+        # Optional: also prevent add/remove while running
+        self.add_sound_btn.configure(state="disabled")
+        self.remove_sound_btn.configure(state="disabled")
 
     def on_stop(self):
         if self.detector:
@@ -320,9 +323,12 @@ class App(tk.Tk):
 
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-
-        # re-enable advanced controls
         self._set_advanced_enabled(True)
+
+        # Re-enable sound list editing
+        self.add_sound_btn.configure(state="normal")
+        # remove depends on whether list has items
+        self.remove_sound_btn.configure(state="normal" if getattr(self, "_sound_paths", []) else "disabled")
 
 
 if __name__ == "__main__":
