@@ -212,9 +212,3 @@ The theme picker in the UI exposes all ttkbootstrap themes. Some highlights:
 **Light:** `flatly`, `cosmo`, `minty`, `litera`, `journal`, `sandstone`, `yeti`
 
 The selected theme is persisted to `config.json` and restored on next launch.
-
----
-
-## License
-
-GNU General Public License v2.0 — see [LICENSE](LICENSE) for details.
