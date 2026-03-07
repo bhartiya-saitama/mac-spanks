@@ -1,6 +1,6 @@
 # Spank Detector
 
-A macOS menubar-free desktop app that listens to your microphone and plays a custom sound every time it detects a chassis tap (or any sharp impact). Built with Python, ttkbootstrap, and sounddevice.
+A macOS app that listens to your microphone and plays a custom sound every time it detects a chassis tap (or any sharp impact). Built with Python, ttkbootstrap, and sounddevice.
 
 ---
 
